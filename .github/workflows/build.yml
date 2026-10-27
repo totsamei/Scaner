@@ -69,8 +69,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 3
-                  versionName = "2.1"
+                  versionCode = 4
+                  versionName = "2.2"
               }
 
               compileOptions {
@@ -106,7 +106,7 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:label="Сканер цен 2.1"
+                  android:label="Сканер цен 2.2"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
 
@@ -185,8 +185,7 @@ jobs:
               private var isPaused = false
               private var lastAnalyzeTime = 0L
 
-              // Настройки
-              private var currentTheme = "Dark" // Dark, Light, Amoled
+              private var currentTheme = "Dark"
               private var roundPrices = false
               private var vibeEnabled = true
               private var vibeMs = 45L
@@ -219,7 +218,6 @@ jobs:
                       orientation = LinearLayout.VERTICAL
                   }
 
-                  // Верхняя панель с заголовком и кнопкой настроек
                   val topBar = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       setPadding(24, 12, 24, 12)
@@ -394,22 +392,19 @@ jobs:
               }
 
               private fun applyThemeColors() {
-                  val bg: Int; val panelBg: Int; val textCol: Int
+                  val bg: Int; val panelBg: Int
                   when (currentTheme) {
                       "Light" -> {
                           bg = Color.parseColor("#F5F5F5")
                           panelBg = Color.parseColor("#FFFFFF")
-                          textCol = Color.parseColor("#111111")
                       }
                       "Amoled" -> {
                           bg = Color.parseColor("#000000")
                           panelBg = Color.parseColor("#0A0A0A")
-                          textCol = Color.parseColor("#FFFFFF")
                       }
-                      else -> { // Dark
+                      else -> {
                           bg = Color.parseColor("#121212")
                           panelBg = Color.parseColor("#1E1E1E")
-                          textCol = Color.parseColor("#FFFFFF")
                       }
                   }
                   rootLayout.setBackgroundColor(bg)
@@ -484,7 +479,7 @@ jobs:
                   if (alternatives.isNotEmpty()) {
                       chipsContainer.removeAllViews()
                       val label = TextView(this).apply {
-                          text = "Быстрый выбор: "
+                          text = "Выбор: "
                           setTextColor(Color.LTGRAY)
                           textSize = 12f
                       }
@@ -493,9 +488,9 @@ jobs:
                       alternatives.take(3).forEach { (altPrice, altName) ->
                           val finalAltPrice = if (roundPrices) altPrice.toInt().toDouble() else altPrice
                           val chip = Button(this).apply {
-                              text = String.format("%s: %.0f ₽", altName.take(8), finalAltPrice)
+                              text = String.format("%s: %.0f ₽", altName.take(7), finalAltPrice)
                               textSize = 12f
-                              setPadding(16, 2, 16, 2)
+                              setPadding(14, 2, 14, 2)
                               background = makeRoundedButtonDrawable(Color.parseColor("#2E7D32"), 16f)
                               setTextColor(Color.WHITE)
                               layoutParams = LinearLayout.LayoutParams(
@@ -515,7 +510,7 @@ jobs:
               private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Triple<Double?, String, List<Pair<Double, String>>> {
                   val boxes = mutableListOf<PriceBox>()
                   val linesOfText = mutableListOf<Pair<String, Rect>>()
-                  val minAllowedHeight = (imgH * 0.022).toInt()
+                  val minAllowedHeight = (imgH * 0.02).toInt()
 
                   for (block in visionText.textBlocks) {
                       for (line in block.lines) {
@@ -526,11 +521,10 @@ jobs:
                           if (cx < 0.12 || cx > 0.88 || cy < 0.25 || cy > 0.75) continue
 
                           linesOfText.add(Pair(line.text, rect))
-
                           if (rect.height() < minAllowedHeight) continue
 
                           val lineText = line.text.lowercase()
-                          if (lineText.contains("г/") || lineText.contains("гр") || lineText.contains("мл") || lineText.contains("ккал")) continue
+                          if (lineText.contains("г/") || lineText.contains("гр") || lineText.contains("мл") || lineText.contains("ккал") || lineText.contains("123456789")) continue
 
                           for (element in line.elements) {
                               val elRect = element.boundingBox ?: continue
@@ -558,22 +552,21 @@ jobs:
                   for (main in mainCandidates) {
                       var combinedValue = main.value
                       if (main.rawInt != null) {
+                          // Ищем копейки справа ИЛИ снизу от крупной цены
                           val kopecksBox = boxes.firstOrNull { other ->
                               other != main &&
                               other.rawInt in listOf(99, 90, 95, 89, 79, 49, 50, 0) &&
                               other.height < main.height * 0.85 &&
-                              other.rect.left >= main.rect.right - (main.rect.width() * 0.2) &&
-                              other.rect.left <= main.rect.right + main.rect.width() &&
-                              abs(other.rect.top - main.rect.top) < main.height * 0.7
+                              ((other.rect.left >= main.rect.right - (main.rect.width() * 0.2) && other.rect.left <= main.rect.right + main.rect.width() && abs(other.rect.top - main.rect.top) < main.height * 0.7) ||
+                               (other.rect.top >= main.rect.bottom - (main.height * 0.3) && other.rect.top <= main.rect.bottom + (main.height * 0.8) && abs(other.rect.centerX() - main.rect.centerX()) < main.rect.width()))
                           }
                           if (kopecksBox != null && kopecksBox.rawInt != null) {
                               combinedValue = main.rawInt + (kopecksBox.rawInt / 100.0)
                           }
                       }
 
-                      // Ищем название товара рядом (строка выше цены или слева)
                       val foundName = findProductNameNear(main.rect, linesOfText)
-                      if (!parsedList.any { it.first == combinedValue }) {
+                      if (!parsedList.any { abs(it.first - combinedValue) < 0.01 }) {
                           parsedList.add(Pair(combinedValue, foundName))
                       }
                   }
@@ -583,18 +576,18 @@ jobs:
               }
 
               private fun findProductNameNear(priceRect: Rect, lines: List<Pair<String, Rect>>): String {
-                  // Ищем текст, который находится выше цены или вровень с ней слева
-                  val candidates = lines.filter { (_, rect) ->
-                      rect.bottom <= priceRect.top + (priceRect.height() * 0.5) &&
-                      abs(rect.centerX() - priceRect.centerX()) < priceRect.width() * 2.5
+                  // Ищем русские слова рядом, отсекая технический мусор и латинский бред
+                  val candidates = lines.filter { (text, rect) ->
+                      text.length > 2 &&
+                      !text.contains("http") && !text.contains("www") && !text.contains("sber") && !text.contains("1234") &&
+                      text.any { it in 'а'..'я' || it in 'А'..'Я' } &&
+                      rect.bottom <= priceRect.top + priceRect.height() &&
+                      abs(rect.centerX() - priceRect.centerX()) < priceRect.width() * 3.0
                   }
 
-                  val bestLine = candidates.minByOrNull { (_, rect) -> priceRect.top - rect.bottom }?.first
-                      ?: lines.firstOrNull { (_, rect) -> rect.right < priceRect.left }?.first
-                      ?: "Товар"
+                  val bestLine = candidates.minByOrNull { (_, rect) -> abs(priceRect.top - rect.bottom) }?.first ?: "Товар"
 
-                  // Чистим и сокращаем название (оставляем первые 2-3 слова, максимум 16 символов)
-                  val cleaned = bestLine.replace(Regex("""[^\p{L}\p{Nd}\s]"""), "").trim()
+                  val cleaned = bestLine.replace(Regex("""[^а-яА-ЯёЁ\s]"""), "").trim()
                   val words = cleaned.split(Regex("\\s+")).filter { it.length > 1 }
                   val shortName = words.take(2).joinToString(" ").take(16)
 
@@ -699,7 +692,7 @@ jobs:
                       }
 
                       val btnMinus = Button(this).apply {
-                          text = "−"
+                        text = "−"
                           textSize = 14f
                           setTypeface(null, Typeface.BOLD)
                           background = makeRoundedButtonDrawable(Color.parseColor("#555555"), 12f)
