@@ -69,8 +69,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 5
-                  versionName = "2.3"
+                  versionCode = 6
+                  versionName = "2.4"
               }
 
               compileOptions {
@@ -86,7 +86,9 @@ jobs:
               implementation("androidx.core:core-ktx:1.12.0")
               implementation("androidx.appcompat:appcompat:1.6.1")
               implementation("com.google.android.material:material:1.11.0")
-              implementation("com.google.mlkit:text-recognition:16.0.0")
+              
+              // Заменено на библиотеку с поддержкой русского языка
+              implementation("com.google.mlkit:text-recognition-cyrillic:16.0.1")
 
               val cameraxVersion = "1.3.1"
               implementation("androidx.camera:camera-core:$cameraxVersion")
@@ -106,7 +108,7 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:label="Сканер цен 2.3"
+                  android:label="Сканер цен 2.4"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
 
@@ -157,13 +159,13 @@ jobs:
           import com.google.mlkit.vision.common.InputImage
           import com.google.mlkit.vision.text.Text
           import com.google.mlkit.vision.text.TextRecognition
-          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+          import com.google.mlkit.vision.text.cyrillic.CyrillicTextRecognizerOptions
           import java.util.concurrent.ExecutorService
           import java.util.concurrent.Executors
           import kotlin.math.abs
 
           data class CartItem(var name: String, var price: Double, var count: Int = 1)
-          data class PriceBox(val value: Double, val rawInt: Int?, val rect: Rect, val height: Int, val lineText: String)
+          data class PriceBox(val value: Double, val rect: Rect, val height: Int)
 
           class MainActivity : AppCompatActivity() {
 
@@ -176,7 +178,7 @@ jobs:
               private lateinit var sumPanel: LinearLayout
               private lateinit var cameraExecutor: ExecutorService
 
-              private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+              private val recognizer = TextRecognition.getClient(CyrillicTextRecognizerOptions.Builder().build())
               private val cartItems = mutableListOf<CartItem>()
 
               private val recentDetections = ArrayDeque<Double>()
@@ -251,11 +253,11 @@ jobs:
                   cameraFrame.addView(previewView)
 
                   val targetBox = View(this).apply {
-                      val sizeW = (resources.displayMetrics.widthPixels * 0.68f).toInt()
-                      val sizeH = (resources.displayMetrics.heightPixels * 0.15f).toInt()
+                      val sizeW = (resources.displayMetrics.widthPixels * 0.72f).toInt()
+                      val sizeH = (resources.displayMetrics.heightPixels * 0.16f).toInt()
                       layoutParams = FrameLayout.LayoutParams(sizeW, sizeH, Gravity.CENTER)
                       background = GradientDrawable().apply {
-                          setStroke(6, Color.parseColor("#00E676"))
+                          setStroke(8, Color.parseColor("#00E676"))
                           cornerRadius = 24f
                           setColor(Color.parseColor("#1A000000"))
                       }
@@ -508,9 +510,9 @@ jobs:
               }
 
               private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Triple<Double?, String, List<Pair<Double, String>>> {
-                  val allNumbers = mutableListOf<Triple<Double, Rect, Int>>() // число, координаты, высота
+                  val allNumbers = mutableListOf<PriceBox>()
                   val linesOfText = mutableListOf<Pair<String, Rect>>()
-                  val minAllowedHeight = (imgH * 0.025).toInt()
+                  val minAllowedHeight = (imgH * 0.02).toInt()
 
                   for (block in visionText.textBlocks) {
                       for (line in block.lines) {
@@ -518,12 +520,13 @@ jobs:
                           val cx = rect.centerX().toDouble() / imgW
                           val cy = rect.centerY().toDouble() / imgH
 
-                          if (cx < 0.1 || cx > 0.9 || cy < 0.2 || cy > 0.8) continue
+                          // Строгое ограничение: сканируем ТОЛЬКО центральную область
+                          // Игнорируем верхнюю и нижнюю треть экрана
+                          if (cx < 0.1 || cx > 0.9 || cy < 0.35 || cy > 0.65) continue
 
                           val textLower = line.text.lowercase()
                           linesOfText.add(Pair(line.text, rect))
 
-                          // Пропускаем мусор, штрихкоды, даты и зачеркнутый текст (старая цена)
                           if (textLower.contains("стара") || textLower.contains("http") || textLower.contains("www") || 
                               textLower.contains("sber") || textLower.contains("123456") || textLower.contains("г/") || 
                               textLower.contains("гр") || textLower.contains("мл") || textLower.contains("ккал")) {
@@ -537,41 +540,40 @@ jobs:
                               val cleaned = element.text
                                   .replace("O", "0").replace("о", "0")
                                   .replace("З", "3").replace("Б", "6")
-                                  .replace("'", "").replace(" ", "")
+                                  .replace(Regex("[^0-9,.]"), "")
 
-                              // Поддерживаем форматы вроде 1234.50, 299.95, 399
-                              val regex = Regex("""^\d{1,5}([.,]\d{2})?$""")
-                              val match = regex.find(cleaned) ?: continue
-                              val num = match.value.replace(",", ".").toDoubleOrNull() ?: continue
+                              if (cleaned.isEmpty()) continue
 
-                              if (num in 2023.0..2028.0 || num > 90000.0 || num < 5.0) continue
+                              val num = cleaned.replace(",", ".").toDoubleOrNull() ?: continue
+                              if (num > 50000.0) continue // Защита от штрихкодов
 
-                              allNumbers.add(Triple(num, elRect, elRect.height()))
+                              allNumbers.add(PriceBox(num, elRect, elRect.height()))
                           }
                       }
                   }
 
                   if (allNumbers.isEmpty()) return Triple(null, "Товар", emptyList())
 
-                  // Сортируем все числа строго по высоте шрифта (самые крупные — первыми!)
-                  val sortedByHeight = allNumbers.sortedByDescending { it.third }
+                  val sortedByHeight = allNumbers.sortedByDescending { it.height }
                   val mainNum = sortedByHeight.first()
 
-                  // Ищем, нет ли рядом копеек (например, справа или снизу от главного крупного числа)
-                  var finalPrice = mainNum.first
-                  val mainRect = mainNum.second
+                  var finalPrice = mainNum.value
+                  val mainRect = mainNum.rect
 
-                  val kopecks = sortedByHeight.firstOrNull { other ->
-                      other != mainNum &&
-                      other.first < 100.0 && 
-                      (other.first % 1 != 0.0 || other.first in listOf(90.0, 95.0, 99.0, 50.0)) &&
-                      other.third < mainNum.third * 0.85 &&
-                      ((other.second.left >= mainRect.right - (mainRect.width() * 0.2) && other.second.left <= mainRect.right + mainRect.width() * 1.5) ||
-                       (other.second.top >= mainRect.bottom - (mainNum.third * 0.3) && other.second.top <= mainRect.bottom + mainNum.third))
-                  }
+                  // Поиск копеек рядом с главной цифрой
+                  if (finalPrice % 1 == 0.0 && finalPrice < 10000.0) {
+                      val kopecks = sortedByHeight.firstOrNull { other ->
+                          other != mainNum &&
+                          other.value < 100.0 && 
+                          other.height < mainNum.height * 0.9 &&
+                          other.rect.left >= mainRect.right - (mainRect.width() * 0.15) &&
+                          other.rect.left <= mainRect.right + (mainRect.width() * 1.5) &&
+                          abs(other.rect.centerY() - mainRect.centerY()) < mainRect.height() * 0.7
+                      }
 
-                  if (kopecks != null && finalPrice % 1 == 0.0) {
-                      finalPrice += (kopecks.first / 100.0)
+                      if (kopecks != null) {
+                          finalPrice += (kopecks.value / 100.0)
+                      }
                   }
 
                   val foundName = findProductNameNear(mainRect, linesOfText)
@@ -582,18 +584,18 @@ jobs:
 
               private fun findProductNameNear(priceRect: Rect, lines: List<Pair<String, Rect>>): String {
                   val candidates = lines.filter { (text, rect) ->
-                      text.length > 2 &&
-                      !text.contains("http") && !text.contains("www") && !text.contains("sber") && !text.contains("1234") &&
-                      text.any { it in 'а'..'я' || it in 'А'..'Я' || it in 'a'..'z' || it in 'A'..'Z' } &&
-                      rect.bottom <= priceRect.top + priceRect.height() * 1.5 &&
-                      abs(rect.centerX() - priceRect.centerX()) < priceRect.width() * 3.0
+                      text.length > 3 &&
+                      !text.lowercase().contains("http") && !text.lowercase().contains("www") && 
+                      text.any { it in 'а'..'я' || it in 'А'..'Я' } &&
+                      rect.bottom <= priceRect.top + (priceRect.height() * 0.5) &&
+                      abs(rect.centerX() - priceRect.centerX()) < priceRect.width() * 2.0
                   }
 
                   val bestLine = candidates.minByOrNull { (_, rect) -> abs(priceRect.top - rect.bottom) }?.first ?: "Товар"
 
-                  val cleaned = bestLine.replace(Regex("""[^\p{L}\p{Nd}\s]"""), "").trim()
+                  val cleaned = bestLine.replace(Regex("""[^а-яА-ЯёЁa-zA-Z0-9\s]"""), "").trim()
                   val words = cleaned.split(Regex("\\s+")).filter { it.length > 1 }
-                  val shortName = words.take(2).joinToString(" ").take(16)
+                  val shortName = words.take(3).joinToString(" ").take(20)
 
                   return if (shortName.isNotBlank()) shortName else "Товар"
               }
