@@ -69,8 +69,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 9
-                  versionName = "2.7"
+                  versionCode = 10
+                  versionName = "2.8"
               }
 
               compileOptions {
@@ -161,10 +161,10 @@ jobs:
           import kotlin.math.abs
 
           data class CartItem(var name: String, var price: Double, var count: Int = 1)
-          data class PriceBox(val value: Double, val rect: Rect, val height: Int)
+          data class PriceBox(val value: Double, val rect: Rect, val area: Int)
 
           class ScannerOverlayView(context: Context) : View(context) {
-              private val paintDim = Paint().apply { color = Color.parseColor("#66000000") } // Затемнение 40%
+              private val paintDim = Paint().apply { color = Color.parseColor("#99000000") } // Затемнение 60%
               private val paintClear = Paint().apply { 
                   xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
                   isAntiAlias = true 
@@ -172,7 +172,7 @@ jobs:
               private val paintStroke = Paint().apply { 
                   color = Color.parseColor("#00E676")
                   style = Paint.Style.STROKE
-                  strokeWidth = 8f
+                  strokeWidth = 10f
                   isAntiAlias = true 
               }
               init { setLayerType(LAYER_TYPE_HARDWARE, null) }
@@ -180,13 +180,13 @@ jobs:
               override fun onDraw(canvas: Canvas) {
                   super.onDraw(canvas)
                   canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paintDim)
-                  val cw = width * 0.72f
-                  val ch = height * 0.16f
+                  val cw = width * 0.70f  // 70% ширины экрана
+                  val ch = height * 0.25f // 25% высоты экрана (более квадратная рамка)
                   val cx = width / 2f
                   val cy = height / 2f
                   val rect = RectF(cx - cw/2, cy - ch/2, cx + cw/2, cy + ch/2)
-                  canvas.drawRoundRect(rect, 24f, 24f, paintClear)
-                  canvas.drawRoundRect(rect, 24f, 24f, paintStroke)
+                  canvas.drawRoundRect(rect, 32f, 32f, paintClear)
+                  canvas.drawRoundRect(rect, 32f, 32f, paintStroke)
               }
           }
 
@@ -204,12 +204,12 @@ jobs:
               private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
               private val cartItems = mutableListOf<CartItem>()
 
-              // Очередь для хранения последних распознаваний (Цена, СомнительныеРубли)
-              private val recentDetections = ArrayDeque<Pair<Double, Double?>>()
+              // Стабилизатор: требуем 3 одинаковых результата из 4 последних
+              private val recentDetections = ArrayDeque<Double>()
               private var lockedPrice: Double? = null
-              private var lockedAmbiguous: Double? = null
               private var isPaused = false
               private var lastAnalyzeTime = 0L
+              private var emptyFrames = 0
 
               private var currentTheme = "Dark"
               private var roundPrices = false
@@ -246,21 +246,21 @@ jobs:
 
                   val topBar = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
-                      setPadding(24, 12, 24, 12)
+                      setPadding(24, 16, 24, 16)
                       gravity = Gravity.CENTER_VERTICAL
                   }
                   val titleTv = TextView(this).apply {
                       text = "Сканер цен"
-                      textSize = 19f
+                      textSize = 20f
                       setTypeface(null, Typeface.BOLD)
                       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                   }
                   val btnSettings = Button(this).apply {
                       text = "⚙ Настройки"
-                      textSize = 14f
+                      textSize = 15f
                       setTypeface(null, Typeface.BOLD)
-                      setPadding(16, 8, 16, 8)
-                      background = makeRoundedButtonDrawable(Color.parseColor("#424242"), 16f)
+                      setPadding(20, 10, 20, 10)
+                      background = makeRoundedButtonDrawable(Color.parseColor("#424242"), 20f)
                       setTextColor(Color.WHITE)
                       setOnClickListener { showSettingsDialog() }
                   }
@@ -276,7 +276,6 @@ jobs:
                   }
                   cameraFrame.addView(previewView)
 
-                  // Добавляем новый красивый оверлей с затемнением
                   val overlay = ScannerOverlayView(this).apply {
                       layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
                   }
@@ -285,25 +284,25 @@ jobs:
                   tvDetectedPrice = TextView(this).apply {
                       text = "Наведи на цену..."
                       setTextColor(Color.WHITE)
-                      textSize = 19f
+                      textSize = 20f
                       setTypeface(null, Typeface.BOLD)
-                      setPadding(36, 16, 36, 16)
+                      setPadding(40, 18, 40, 18)
                       background = GradientDrawable().apply {
                           setColor(Color.parseColor("#D9000000"))
-                          cornerRadius = 30f
+                          cornerRadius = 32f
                       }
                       layoutParams = FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.WRAP_CONTENT,
                           FrameLayout.LayoutParams.WRAP_CONTENT,
                           Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                      ).apply { bottomMargin = 20 }
+                      ).apply { bottomMargin = 24 }
                   }
                   cameraFrame.addView(tvDetectedPrice)
                   rootLayout.addView(cameraFrame)
 
                   chipsContainer = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
-                      setPadding(16, 6, 16, 6)
+                      setPadding(20, 8, 20, 8)
                       gravity = Gravity.CENTER_VERTICAL
                   }
                   rootLayout.addView(chipsContainer)
@@ -316,47 +315,42 @@ jobs:
 
                   val btnAddLive = Button(this).apply {
                       text = "+ ДОБАВИТЬ"
-                      textSize = 16f
+                      textSize = 17f
                       setTypeface(null, Typeface.BOLD)
-                      background = makeRoundedButtonDrawable(Color.parseColor("#00C853"), 20f)
+                      background = makeRoundedButtonDrawable(Color.parseColor("#00C853"), 24f)
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, 130, 1.4f).apply { marginEnd = 10 }
+                      layoutParams = LinearLayout.LayoutParams(0, 140, 1.4f).apply { marginEnd = 12 }
                       setOnClickListener {
                           if (lockedPrice != null) {
-                              if (lockedAmbiguous != null) {
-                                  // Алгоритм сомневается — спрашиваем пользователя
-                                  showAmbiguityDialog(lockedPrice!!, lockedAmbiguous!!)
-                              } else {
-                                  vibrate()
-                                  addPriceToCart("Товар", lockedPrice!!)
-                              }
+                              vibrate()
+                              addPriceToCart("Товар", lockedPrice!!)
                           } else {
-                              Toast.makeText(this@MainActivity, "Цена пока не поймана", Toast.LENGTH_SHORT).show()
+                              Toast.makeText(this@MainActivity, "Сначала наведите на цену", Toast.LENGTH_SHORT).show()
                           }
                       }
                   }
 
                   val btnFreeze = Button(this).apply {
                       text = "❄ СТОП"
-                      textSize = 15f
+                      textSize = 16f
                       setTypeface(null, Typeface.BOLD)
-                      background = makeRoundedButtonDrawable(Color.parseColor("#00838F"), 20f)
+                      background = makeRoundedButtonDrawable(Color.parseColor("#00838F"), 24f)
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, 130, 1.0f).apply { marginEnd = 10 }
+                      layoutParams = LinearLayout.LayoutParams(0, 140, 1.0f).apply { marginEnd = 12 }
                       setOnClickListener {
                           isPaused = !isPaused
                           text = if (isPaused) "▶ ПУСК" else "❄ СТОП"
-                          background = makeRoundedButtonDrawable(Color.parseColor(if (isPaused) "#EF6C00" else "#00838F"), 20f)
+                          background = makeRoundedButtonDrawable(Color.parseColor(if (isPaused) "#EF6C00" else "#00838F"), 24f)
                       }
                   }
 
                   val btnManual = Button(this).apply {
                       text = "ВРУЧНУЮ"
-                      textSize = 15f
+                      textSize = 16f
                       setTypeface(null, Typeface.BOLD)
-                      background = makeRoundedButtonDrawable(Color.parseColor("#424242"), 20f)
+                      background = makeRoundedButtonDrawable(Color.parseColor("#424242"), 24f)
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, 130, 1.0f)
+                      layoutParams = LinearLayout.LayoutParams(0, 140, 1.0f)
                       setOnClickListener { showManualInputDialog() }
                   }
 
@@ -367,23 +361,23 @@ jobs:
 
                   sumPanel = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
-                      setPadding(24, 16, 24, 16)
+                      setPadding(28, 20, 28, 20)
                       gravity = Gravity.CENTER_VERTICAL
                   }
 
                   tvTotalSum = TextView(this).apply {
                       text = "Итого: 0.00 ₽"
                       setTextColor(Color.parseColor("#00E676"))
-                      textSize = 22f
+                      textSize = 24f
                       setTypeface(null, Typeface.BOLD)
                       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                   }
 
                   val btnClearAll = Button(this).apply {
                       text = "СБРОС"
-                      textSize = 14f
+                      textSize = 15f
                       setTypeface(null, Typeface.BOLD)
-                      background = makeRoundedButtonDrawable(Color.parseColor("#D32F2F"), 16f)
+                      background = makeRoundedButtonDrawable(Color.parseColor("#D32F2F"), 20f)
                       setTextColor(Color.WHITE)
                       setOnClickListener { showClearCartDialog() }
                   }
@@ -397,7 +391,7 @@ jobs:
                   }
                   itemsContainer = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(16, 8, 16, 20)
+                      setPadding(20, 12, 20, 24)
                   }
                   scrollView.addView(itemsContainer)
                   rootLayout.addView(scrollView)
@@ -409,29 +403,13 @@ jobs:
               private fun showClearCartDialog() {
                   AlertDialog.Builder(this)
                       .setTitle("Очистить список?")
-                      .setMessage("Все отсканированные товары будут удалены безвозвратно.")
-                      .setPositiveButton("Удалить") { _, _ ->
+                      .setMessage("Вы уверены, что хотите удалить все товары?")
+                      .setPositiveButton("Да, удалить") { _, _ ->
                           cartItems.clear()
                           saveCart()
                           refreshCartUI()
                       }
                       .setNegativeButton("Отмена", null)
-                      .show()
-              }
-
-              private fun showAmbiguityDialog(fullPrice: Double, pureRubles: Double) {
-                  AlertDialog.Builder(this)
-                      .setTitle("Уточнение цены")
-                      .setMessage("Алгоритм нашел цифры рядом и не уверен, копейки это или отдельная информация (вес/штуки).\n\nКакую цену добавить?")
-                      .setPositiveButton(String.format("%.2f ₽", fullPrice)) { _, _ ->
-                          vibrate()
-                          addPriceToCart("Товар", fullPrice)
-                      }
-                      .setNegativeButton(String.format("%.0f ₽", pureRubles)) { _, _ ->
-                          vibrate()
-                          addPriceToCart("Товар", pureRubles)
-                      }
-                      .setNeutralButton("Отмена", null)
                       .show()
               }
 
@@ -483,8 +461,8 @@ jobs:
                               return@setAnalyzer
                           }
                           val now = System.currentTimeMillis()
-                          // Увеличено до 600 мс — алгоритм "думает" дольше, скачки пропадут
-                          if (now - lastAnalyzeTime < 600) {
+                          // Частота анализа: раз в 500 мс (стабильность)
+                          if (now - lastAnalyzeTime < 500) {
                               imageProxy.close()
                               return@setAnalyzer
                           }
@@ -492,13 +470,22 @@ jobs:
 
                           val mediaImage = imageProxy.image
                           if (mediaImage != null) {
-                              val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                              val bitmap = imageProxy.toBitmap()
+                              
+                              // ФИЗИЧЕСКАЯ ОБРЕЗКА: мы отдаем нейросети только то, что внутри зеленой рамки!
+                              // Размеры рамки: ширина 70%, высота 25% по центру
+                              val cropX = (bitmap.width * 0.15f).toInt()
+                              val cropY = (bitmap.height * 0.375f).toInt()
+                              val cropW = (bitmap.width * 0.70f).toInt()
+                              val cropH = (bitmap.height * 0.25f).toInt()
+                              
+                              val croppedBitmap = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                              val image = InputImage.fromBitmap(croppedBitmap, 0)
+                              
                               recognizer.process(image)
                                   .addOnSuccessListener { visionText ->
-                                      val (bestPrice, ambiguousRubles, alternatives) = analyzePriceTag(visionText, image.width, image.height)
-                                      runOnUiThread {
-                                          updateStabilizedPrice(bestPrice, ambiguousRubles, alternatives)
-                                      }
+                                      val bestPrice = analyzeCroppedImage(visionText)
+                                      runOnUiThread { updateStabilizedPrice(bestPrice) }
                                   }
                                   .addOnCompleteListener { imageProxy.close() }
                           } else {
@@ -511,369 +498,31 @@ jobs:
                   }, ContextCompat.getMainExecutor(this))
               }
 
-              private fun updateStabilizedPrice(newPrice: Double?, ambigRubles: Double?, alternatives: List<Double>) {
+              private fun updateStabilizedPrice(newPrice: Double?) {
                   if (newPrice != null) {
-                      // Очередь вмещает 5 последних кадров
-                      if (recentDetections.size >= 5) recentDetections.removeFirst()
-                      recentDetections.addLast(Pair(newPrice, ambigRubles))
+                      emptyFrames = 0
+                      recentDetections.addLast(newPrice)
+                      if (recentDetections.size > 4) recentDetections.removeFirst()
 
-                      // Ждем, пока цена не совпадет минимум в 3 кадрах (около 1.5 - 2 секунд!)
-                      val stableMatch = recentDetections.groupingBy { it.first }.eachCount().entries.firstOrNull { it.value >= 3 }
+                      // Требуем 3 одинаковых результата из 4 последних
+                      val stablePrice = recentDetections.groupingBy { it }.eachCount().entries.firstOrNull { it.value >= 3 }?.key
 
-                      if (stableMatch != null) {
-                          val confirmedPrice = stableMatch.key
-                          val confirmedAmbig = recentDetections.firstOrNull { it.first == confirmedPrice }?.second
-
-                          lockedPrice = if (roundPrices) confirmedPrice.toInt().toDouble() else confirmedPrice
-                          lockedAmbiguous = confirmedAmbig
+                      if (stablePrice != null) {
+                          lockedPrice = if (roundPrices) stablePrice.toInt().toDouble() else stablePrice
                           tvDetectedPrice.text = String.format("Цена: %.2f ₽", lockedPrice)
                       }
-                  }
-
-                  if (alternatives.isNotEmpty()) {
-                      chipsContainer.removeAllViews()
-                      val label = TextView(this).apply {
-                          text = "Выбор: "
-                          setTextColor(Color.LTGRAY)
-                          textSize = 13f
-                      }
-                      chipsContainer.addView(label)
-
-                      alternatives.take(3).forEach { altPrice ->
-                          val finalAltPrice = if (roundPrices) altPrice.toInt().toDouble() else altPrice
-                          val chip = Button(this).apply {
-                              text = String.format("%.0f ₽", finalAltPrice)
-                              textSize = 13f
-                              setTypeface(null, Typeface.BOLD)
-                              setPadding(16, 2, 16, 2)
-                              background = makeRoundedButtonDrawable(Color.parseColor("#2E7D32"), 16f)
-                              setTextColor(Color.WHITE)
-                              layoutParams = LinearLayout.LayoutParams(
-                                  LinearLayout.LayoutParams.WRAP_CONTENT,
-                                  96
-                              ).apply { marginStart = 8 }
-                              setOnClickListener {
-                                  vibrate()
-                                  addPriceToCart("Товар", finalAltPrice)
-                              }
-                          }
-                          chipsContainer.addView(chip)
+                  } else {
+                      emptyFrames++
+                      if (emptyFrames >= 3) { // Если 3 кадра подряд пусто - сбрасываем залипание
+                          recentDetections.clear()
+                          lockedPrice = null
+                          tvDetectedPrice.text = "Наведи на цену..."
+                          chipsContainer.removeAllViews()
                       }
                   }
               }
 
-              private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Triple<Double?, Double?, List<Double>> {
+              private fun analyzeCroppedImage(visionText: Text): Double? {
                   val allNumbers = mutableListOf<PriceBox>()
-                  val minAllowedHeight = (imgH * 0.02).toInt()
 
-                  for (block in visionText.textBlocks) {
-                      val bRect = block.boundingBox ?: continue
-                      val bCy = bRect.centerY().toDouble() / imgH
-                      if (bCy < 0.25 || bCy > 0.75) continue
-
-                      for (line in block.lines) {
-                          val rect = line.boundingBox ?: continue
-                          val cx = rect.centerX().toDouble() / imgW
-                          val cy = rect.centerY().toDouble() / imgH
-
-                          // СТРОГИЕ ГРАНИЦЫ ЗЕЛЕНОЙ РАМКИ
-                          if (cx < 0.14 || cx > 0.86 || cy < 0.38 || cy > 0.62) continue
-
-                          for (element in line.elements) {
-                              val elRect = element.boundingBox ?: continue
-                              if (elRect.height() < minAllowedHeight) continue
-
-                              val cleaned = element.text
-                                  .uppercase()
-                                  .replace("O", "0").replace("О", "0")
-                                  .replace("З", "3").replace("Б", "6")
-                                  .replace(Regex("[^0-9,.]"), "")
-
-                              if (cleaned.isEmpty()) continue
-                              
-                              // УБИЙЦА ШТРИХКОДОВ
-                              val digitsOnly = cleaned.replace(".", "").replace(",", "")
-                              if (digitsOnly.length > 5) continue
-
-                              val num = cleaned.replace(",", ".").toDoubleOrNull() ?: continue
-                              if (num > 50000.0 || num < 2.0) continue 
-
-                              allNumbers.add(PriceBox(num, elRect, elRect.height()))
-                          }
-                      }
-                  }
-
-                  if (allNumbers.isEmpty()) return Triple(null, null, emptyList())
-
-                  val sortedByHeight = allNumbers.sortedByDescending { it.height }
-                  val mainNum = sortedByHeight.first()
-
-                  var finalPrice = mainNum.value
-                  var ambiguousRubles: Double? = null
-                  val mainRect = mainNum.rect
-
-                  // Логика склейки и проверки на сомнения
-                  if (finalPrice % 1 == 0.0 && finalPrice < 10000.0) {
-                      val kopecks = sortedByHeight.firstOrNull { other ->
-                          other != mainNum &&
-                          other.value < 100.0 && 
-                          other.height < mainNum.height * 0.95 &&
-                          other.rect.left >= mainRect.right - (mainRect.width() * 0.2) &&
-                          other.rect.left <= mainRect.right + (mainRect.width() * 1.5) &&
-                          abs(other.rect.centerY() - mainRect.centerY()) < mainRect.height() * 0.7
-                      }
-
-                      if (kopecks != null) {
-                          // Проверяем: если копейки слишком крупные ИЛИ стоят далеко — помечаем как "сомнительные"
-                          val isSuspiciouslyLarge = kopecks.height > mainNum.height * 0.65
-                          val isFarAway = kopecks.rect.left > mainRect.right + (mainRect.width() * 0.5)
-                          
-                          if (isSuspiciouslyLarge || isFarAway) {
-                              ambiguousRubles = finalPrice // Запоминаем "чистые рубли" для вопроса
-                          }
-                          finalPrice += (kopecks.value / 100.0)
-                      }
-                  }
-
-                  val alts = sortedByHeight.map { it.value }
-                      .filter { it != mainNum.value && it > 5.0 && it != finalPrice && it != ambiguousRubles }
-                      .distinct()
-
-                  return Triple(finalPrice, ambiguousRubles, alts)
-              }
-
-              private fun processImageFromUri(uri: Uri) {
-                  try {
-                      val image = InputImage.fromFilePath(this, uri)
-                      recognizer.process(image).addOnSuccessListener { visionText ->
-                          val (bestPrice, _, list) = analyzePriceTag(visionText, image.width, image.height)
-                          if (bestPrice == null) {
-                              Toast.makeText(this, "Цены не найдены", Toast.LENGTH_SHORT).show()
-                          } else {
-                              val items = (listOf(bestPrice) + list).map { String.format("%.2f ₽", if (roundPrices) it.toInt().toDouble() else it) }.toTypedArray()
-                              AlertDialog.Builder(this)
-                                  .setTitle("Выбери цену:")
-                                  .setItems(items) { _, which ->
-                                      val sel = (listOf(bestPrice) + list)[which]
-                                      val p = if (roundPrices) sel.toInt().toDouble() else sel
-                                      addPriceToCart("Товар", p)
-                                  }
-                                  .setNegativeButton("Отмена", null)
-                                  .show()
-                          }
-                      }
-                  } catch (e: Exception) {
-                      Toast.makeText(this, "Ошибка чтения фото", Toast.LENGTH_SHORT).show()
-                  }
-              }
-
-              private fun vibrate() {
-                  if (!vibeEnabled) return
-                  val v = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                  v?.vibrate(VibrationEffect.createOneShot(vibeMs, VibrationEffect.DEFAULT_AMPLITUDE))
-              }
-
-              private fun addPriceToCart(name: String, price: Double) {
-                  cartItems.add(0, CartItem(name, price, 1))
-                  saveCart()
-                  refreshCartUI()
-              }
-
-              private fun saveSettings() {
-                  val prefs = getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE)
-                  prefs.edit()
-                      .putString("theme", currentTheme)
-                      .putBoolean("round", roundPrices)
-                      .putBoolean("vibe_en", vibeEnabled)
-                      .putLong("vibe_ms", vibeMs)
-                      .apply()
-              }
-
-              private fun loadSettings() {
-                  val prefs = getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE)
-                  currentTheme = prefs.getString("theme", "Dark") ?: "Dark"
-                  roundPrices = prefs.getBoolean("round", false)
-                  vibeEnabled = prefs.getBoolean("vibe_en", true)
-                  vibeMs = prefs.getLong("vibe_ms", 45L)
-              }
-
-              private fun saveCart() {
-                  val prefs = getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE)
-                  val serialized = cartItems.joinToString(";") { "${Uri.encode(it.name)}:${it.price}:${it.count}" }
-                  prefs.edit().putString("cart_data", serialized).apply()
-              }
-
-              private fun loadSavedCart() {
-                  val prefs = getSharedPreferences("scanner_prefs", Context.MODE_PRIVATE)
-                  val serialized = prefs.getString("cart_data", "") ?: ""
-                  if (serialized.isNotEmpty()) {
-                      serialized.split(";").forEach { token ->
-                          val parts = token.split(":")
-                          if (parts.size >= 3) {
-                              val name = Uri.decode(parts[0])
-                              val p = parts[1].toDoubleOrNull()
-                              val c = parts[2].toIntOrNull()
-                              if (p != null && c != null) cartItems.add(CartItem(name, p, c))
-                          }
-                      }
-                  }
-              }
-
-              private fun refreshCartUI() {
-                  itemsContainer.removeAllViews()
-                  var total = 0.0
-
-                  cartItems.forEachIndexed { index, item ->
-                      total += item.price * item.count
-
-                      val row = LinearLayout(this).apply {
-                          orientation = LinearLayout.HORIZONTAL
-                          setPadding(12, 10, 12, 10)
-                          gravity = Gravity.CENTER_VERTICAL
-                      }
-
-                      val tvItem = TextView(this).apply {
-                          text = String.format("%s\n%.2f ₽  × %d  =  %.2f ₽", item.name, item.price, item.count, item.price * item.count)
-                          setTextColor(if (currentTheme == "Light") Color.parseColor("#222222") else Color.WHITE)
-                          textSize = 16f
-                          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                      }
-
-                      val btnMinus = Button(this).apply {
-                          text = "−"
-                          textSize = 15f
-                          setTypeface(null, Typeface.BOLD)
-                          background = makeRoundedButtonDrawable(Color.parseColor("#555555"), 12f)
-                          setTextColor(Color.WHITE)
-                          layoutParams = LinearLayout.LayoutParams(100, 100).apply { marginEnd = 8 }
-                          setOnClickListener {
-                              item.count--
-                              if (item.count <= 0) cartItems.removeAt(index)
-                              saveCart()
-                              refreshCartUI()
-                          }
-                      }
-
-                      val btnPlus = Button(this).apply {
-                          text = "+"
-                          textSize = 15f
-                          setTypeface(null, Typeface.BOLD)
-                          background = makeRoundedButtonDrawable(Color.parseColor("#2E7D32"), 12f)
-                          setTextColor(Color.WHITE)
-                          layoutParams = LinearLayout.LayoutParams(100, 100)
-                          setOnClickListener {
-                              item.count++
-                              saveCart()
-                              refreshCartUI()
-                          }
-                      }
-
-                      row.addView(tvItem)
-                      row.addView(btnMinus)
-                      row.addView(btnPlus)
-                      itemsContainer.addView(row)
-                  }
-
-                  tvTotalSum.text = String.format("Итого: %.2f ₽", total)
-              }
-
-              private fun showSettingsDialog() {
-                  val layout = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(40, 30, 40, 10)
-                  }
-
-                  val themeLabel = TextView(this).apply { text = "Цветовая тема:"; textSize = 15f; setTextColor(Color.GRAY) }
-                  val themeSpinner = Spinner(this).apply {
-                      adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, arrayOf("Тёмная", "Светлая", "AMOLED (чёрная)"))
-                      setSelection(when(currentTheme) { "Light" -> 1; "Amoled" -> 2; else -> 0 })
-                  }
-
-                  val roundCheck = CheckBox(this).apply {
-                      text = "Округлять копейки до рублей"
-                      isChecked = roundPrices
-                      textSize = 16f
-                  }
-
-                  val vibeCheck = CheckBox(this).apply {
-                      text = "Вибрация при добавлении"
-                      isChecked = vibeEnabled
-                      textSize = 16f
-                  }
-
-                  val vibeMsInput = EditText(this).apply {
-                      inputType = InputType.TYPE_CLASS_NUMBER
-                      setText(vibeMs.toString())
-                      hint = "Длительность (мс)"
-                  }
-
-                  layout.addView(themeLabel)
-                  layout.addView(themeSpinner)
-                  layout.addView(roundCheck)
-                  layout.addView(vibeCheck)
-                  layout.addView(TextView(this).apply { text = "Длительность вибрации (мс):"; textSize = 14f; setPadding(0, 10, 0, 0); setTextColor(Color.GRAY) })
-                  layout.addView(vibeMsInput)
-
-                  AlertDialog.Builder(this)
-                      .setTitle("Настройки")
-                      .setView(layout)
-                      .setPositiveButton("Сохранить") { _, _ ->
-                          currentTheme = when(themeSpinner.selectedItemPosition) { 1 -> "Light"; 2 -> "Amoled"; else -> "Dark" }
-                          roundPrices = roundCheck.isChecked
-                          vibeEnabled = vibeCheck.isChecked
-                          vibeMs = vibeMsInput.text.toString().toLongOrNull() ?: 45L
-                          saveSettings()
-                          applyThemeColors()
-                          refreshCartUI()
-                          Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show()
-                      }
-                      .setNegativeButton("Отмена", null)
-                      .show()
-              }
-
-              private fun showManualInputDialog() {
-                  val layout = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(30, 20, 30, 10)
-                  }
-                  val nameInput = EditText(this).apply { hint = "Название товара (опционально)" }
-                  val priceInput = EditText(this).apply {
-                      inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                      hint = "Цена (например: 159.90)"
-                  }
-                  layout.addView(nameInput)
-                  layout.addView(priceInput)
-
-                  AlertDialog.Builder(this)
-                      .setTitle("Ввод вручную")
-                      .setView(layout)
-                      .setPositiveButton("Добавить") { _, _ ->
-                          val name = nameInput.text.toString().trim().ifEmpty { "Товар" }
-                          val p = priceInput.text.toString().replace(",", ".").toDoubleOrNull()
-                          if (p != null && p > 0) {
-                              val finalP = if (roundPrices) p.toInt().toDouble() else p
-                              addPriceToCart(name, finalP)
-                          }
-                      }
-                      .setNegativeButton("Отмена", null)
-                      .show()
-              }
-
-              override fun onDestroy() {
-                  super.onDestroy()
-                  cameraExecutor.shutdown()
-              }
-          }
-          EOF
-
-      - name: Setup Gradle and Build Debug APK
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.6'
-          arguments: assembleDebug
-
-      - name: Upload Ready APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: PriceScanner-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+                  for (block in visionText.
