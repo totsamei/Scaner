@@ -21,6 +21,8 @@ jobs:
       - name: Generate Android Project Files
         run: |
           mkdir -p app/src/main/java/com/example/pricescanner
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
 
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
@@ -69,8 +71,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 12
-                  versionName = "3.0"
+                  versionCode = 14
+                  versionName = "3.2"
               }
 
               compileOptions {
@@ -96,6 +98,45 @@ jobs:
           }
           EOF
 
+          # Генерация векторной иконки (Темный фон)
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#121212" android:pathData="M0,0h108v108h-108z"/>
+          </vector>
+          EOF
+
+          # Генерация векторной иконки (Зеленый ценник)
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <group android:scaleX="2.5" android:scaleY="2.5" android:translateX="24" android:translateY="24">
+                  <path android:fillColor="#00E676" android:pathData="M21.41,11.58l-9,-9C12.05,2.22 11.55,2 11,2H4C2.9,2 2,2.9 2,4v7c0,0.55 0.22,1.05 0.59,1.42l9,9c0.36,0.36 0.86,0.58 1.41,0.58c0.55,0 1.05,-0.22 1.41,-0.59l7,-7c0.37,-0.36 0.59,-0.86 0.59,-1.41c0,-0.55 -0.23,-1.06 -0.59,-1.42zM5.5,7C4.67,7 4,6.33 4,5.5S4.67,4 5.5,4 7,4.67 7,5.5 6.33,7 5.5,7z"/>
+              </group>
+          </vector>
+          EOF
+
+          # Привязка иконки
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -106,6 +147,8 @@ jobs:
 
               <application
                   android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
                   android:label="Сканер цен"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
@@ -159,6 +202,7 @@ jobs:
           import java.util.concurrent.ExecutorService
           import java.util.concurrent.Executors
           import kotlin.math.abs
+          import kotlin.math.ceil
 
           data class CartItem(var name: String, var price: Double, var count: Int = 1)
           data class PriceBox(val value: Double, val rect: Rect, val area: Int)
@@ -217,7 +261,6 @@ jobs:
                       orientation = LinearLayout.VERTICAL
                   }
 
-                  // 1. Камера занимает ровно 35% экрана сверху
                   val cameraFrame = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.35f)
                   }
@@ -226,7 +269,6 @@ jobs:
                   }
                   cameraFrame.addView(previewView)
                   
-                  // Разделительная полоска
                   val border = View(this).apply {
                       layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 6).apply {
                           gravity = Gravity.BOTTOM
@@ -236,7 +278,6 @@ jobs:
                   cameraFrame.addView(border)
                   rootLayout.addView(cameraFrame)
 
-                  // 2. Нижняя панель с глухим фоном занимает 65%
                   bottomPanel = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.65f)
@@ -452,7 +493,6 @@ jobs:
                           if (mediaImage != null) {
                               val bitmap = imageProxy.toBitmap()
                               
-                              // МАТЕМАТИКА ИДЕАЛЬНОЙ ОБРЕЗКИ (Синхронизировано с экраном)
                               val viewRatio = previewView.width.toFloat() / previewView.height.toFloat()
                               val bitmapRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
                               
@@ -497,7 +537,7 @@ jobs:
                       val stablePrice = recentDetections.groupingBy { it }.eachCount().entries.firstOrNull { it.value >= 3 }?.key
 
                       if (stablePrice != null) {
-                          lockedPrice = if (roundPrices) stablePrice.toInt().toDouble() else stablePrice
+                          lockedPrice = if (roundPrices) ceil(stablePrice) else stablePrice
                           tvDetectedPrice.text = String.format("%.2f ₽", lockedPrice)
                           tvDetectedPrice.setTextColor(Color.WHITE)
                       }
@@ -522,7 +562,7 @@ jobs:
                       chipsContainer.addView(label)
 
                       alternatives.take(3).forEach { altPrice ->
-                          val finalAltPrice = if (roundPrices) altPrice.toInt().toDouble() else altPrice
+                          val finalAltPrice = if (roundPrices) ceil(altPrice) else altPrice
                           val chip = Button(this).apply {
                               text = String.format("%.0f ₽", finalAltPrice)
                               textSize = 13f
@@ -551,7 +591,6 @@ jobs:
                       for (line in block.lines) {
                           val rect = line.boundingBox ?: continue
                           
-                          // Убираем все пробелы и апострофы перед поиском (решает проблему 1'234 и 1 234)
                           val cleanLineText = line.text
                               .replace("O", "0").replace("О", "0")
                               .replace("З", "3").replace("Б", "6")
@@ -568,17 +607,14 @@ jobs:
                       }
                   }
 
-                  // ЖЕСТКИЙ ЛИМИТ: Игнорируем всё, что меньше 15 и больше 15000
                   val validCandidates = allNumbers.filter { it.value in 15.0..15000.0 }
                   if (validCandidates.isEmpty()) return Pair(null, emptyList())
 
-                  // Сортировка по площади (самый крупный шрифт)
                   val sortedByArea = validCandidates.sortedByDescending { it.area }
                   val mainNum = sortedByArea.first()
 
                   var finalPrice = mainNum.value
 
-                  // Поиск копеек, если цена целая
                   if (finalPrice % 1 == 0.0) {
                       val kopecks = allNumbers.firstOrNull { other ->
                           other != mainNum &&
@@ -610,12 +646,12 @@ jobs:
                           if (bestPrice == null) {
                               Toast.makeText(this, "Подходящая цена (от 15 до 15000) не найдена", Toast.LENGTH_SHORT).show()
                           } else {
-                              val items = (listOf(bestPrice) + list).map { String.format("%.2f ₽", if (roundPrices) it.toInt().toDouble() else it) }.toTypedArray()
+                              val items = (listOf(bestPrice) + list).map { String.format("%.2f ₽", if (roundPrices) ceil(it) else it) }.toTypedArray()
                               AlertDialog.Builder(this)
                                   .setTitle("Выбери цену:")
                                   .setItems(items) { _, which ->
                                       val sel = (listOf(bestPrice) + list)[which]
-                                      val p = if (roundPrices) sel.toInt().toDouble() else sel
+                                      val p = if (roundPrices) ceil(sel) else sel
                                       addPriceToCart("Товар", p)
                                   }
                                   .setNegativeButton("Отмена", null)
@@ -811,7 +847,7 @@ jobs:
                           val name = nameInput.text.toString().trim().ifEmpty { "Товар" }
                           val p = priceInput.text.toString().replace(",", ".").toDoubleOrNull()
                           if (p != null && p > 0) {
-                              val finalP = if (roundPrices) p.toInt().toDouble() else p
+                              val finalP = if (roundPrices) ceil(p) else p
                               addPriceToCart(name, finalP)
                           }
                       }
