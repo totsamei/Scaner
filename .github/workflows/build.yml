@@ -69,8 +69,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 4
-                  versionName = "2.2"
+                  versionCode = 5
+                  versionName = "2.3"
               }
 
               compileOptions {
@@ -106,7 +106,7 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:label="Сканер цен 2.2"
+                  android:label="Сканер цен 2.3"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
 
@@ -508,9 +508,9 @@ jobs:
               }
 
               private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Triple<Double?, String, List<Pair<Double, String>>> {
-                  val boxes = mutableListOf<PriceBox>()
+                  val allNumbers = mutableListOf<Triple<Double, Rect, Int>>() // число, координаты, высота
                   val linesOfText = mutableListOf<Pair<String, Rect>>()
-                  val minAllowedHeight = (imgH * 0.02).toInt()
+                  val minAllowedHeight = (imgH * 0.025).toInt()
 
                   for (block in visionText.textBlocks) {
                       for (line in block.lines) {
@@ -518,76 +518,80 @@ jobs:
                           val cx = rect.centerX().toDouble() / imgW
                           val cy = rect.centerY().toDouble() / imgH
 
-                          if (cx < 0.12 || cx > 0.88 || cy < 0.25 || cy > 0.75) continue
+                          if (cx < 0.1 || cx > 0.9 || cy < 0.2 || cy > 0.8) continue
 
+                          val textLower = line.text.lowercase()
                           linesOfText.add(Pair(line.text, rect))
-                          if (rect.height() < minAllowedHeight) continue
 
-                          val lineText = line.text.lowercase()
-                          if (lineText.contains("г/") || lineText.contains("гр") || lineText.contains("мл") || lineText.contains("ккал") || lineText.contains("123456789")) continue
+                          // Пропускаем мусор, штрихкоды, даты и зачеркнутый текст (старая цена)
+                          if (textLower.contains("стара") || textLower.contains("http") || textLower.contains("www") || 
+                              textLower.contains("sber") || textLower.contains("123456") || textLower.contains("г/") || 
+                              textLower.contains("гр") || textLower.contains("мл") || textLower.contains("ккал")) {
+                              continue
+                          }
 
                           for (element in line.elements) {
                               val elRect = element.boundingBox ?: continue
+                              if (elRect.height() < minAllowedHeight) continue
+
                               val cleaned = element.text
                                   .replace("O", "0").replace("о", "0")
                                   .replace("З", "3").replace("Б", "6")
+                                  .replace("'", "").replace(" ", "")
 
+                              // Поддерживаем форматы вроде 1234.50, 299.95, 399
                               val regex = Regex("""^\d{1,5}([.,]\d{2})?$""")
                               val match = regex.find(cleaned) ?: continue
                               val num = match.value.replace(",", ".").toDoubleOrNull() ?: continue
 
-                              if (num in 2023.0..2028.0 || num > 65000.0) continue
+                              if (num in 2023.0..2028.0 || num > 90000.0 || num < 5.0) continue
 
-                              val rawInt = if (!match.value.contains(".") && !match.value.contains(",")) num.toInt() else null
-                              boxes.add(PriceBox(num, rawInt, elRect, elRect.height(), line.text))
+                              allNumbers.add(Triple(num, elRect, elRect.height()))
                           }
                       }
                   }
 
-                  val mainCandidates = boxes.filter { it.value >= 15.0 }.sortedByDescending { h -> h.height }
-                  if (mainCandidates.isEmpty()) return Triple(null, "Товар", emptyList())
+                  if (allNumbers.isEmpty()) return Triple(null, "Товар", emptyList())
 
-                  val parsedList = mutableListOf<Pair<Double, String>>()
+                  // Сортируем все числа строго по высоте шрифта (самые крупные — первыми!)
+                  val sortedByHeight = allNumbers.sortedByDescending { it.third }
+                  val mainNum = sortedByHeight.first()
 
-                  for (main in mainCandidates) {
-                      var combinedValue = main.value
-                      if (main.rawInt != null) {
-                          // Ищем копейки справа ИЛИ снизу от крупной цены
-                          val kopecksBox = boxes.firstOrNull { other ->
-                              other != main &&
-                              other.rawInt in listOf(99, 90, 95, 89, 79, 49, 50, 0) &&
-                              other.height < main.height * 0.85 &&
-                              ((other.rect.left >= main.rect.right - (main.rect.width() * 0.2) && other.rect.left <= main.rect.right + main.rect.width() && abs(other.rect.top - main.rect.top) < main.height * 0.7) ||
-                               (other.rect.top >= main.rect.bottom - (main.height * 0.3) && other.rect.top <= main.rect.bottom + (main.height * 0.8) && abs(other.rect.centerX() - main.rect.centerX()) < main.rect.width()))
-                          }
-                          if (kopecksBox != null && kopecksBox.rawInt != null) {
-                              combinedValue = main.rawInt + (kopecksBox.rawInt / 100.0)
-                          }
-                      }
+                  // Ищем, нет ли рядом копеек (например, справа или снизу от главного крупного числа)
+                  var finalPrice = mainNum.first
+                  val mainRect = mainNum.second
 
-                      val foundName = findProductNameNear(main.rect, linesOfText)
-                      if (!parsedList.any { abs(it.first - combinedValue) < 0.01 }) {
-                          parsedList.add(Pair(combinedValue, foundName))
-                      }
+                  val kopecks = sortedByHeight.firstOrNull { other ->
+                      other != mainNum &&
+                      other.first < 100.0 && 
+                      (other.first % 1 != 0.0 || other.first in listOf(90.0, 95.0, 99.0, 50.0)) &&
+                      other.third < mainNum.third * 0.85 &&
+                      ((other.second.left >= mainRect.right - (mainRect.width() * 0.2) && other.second.left <= mainRect.right + mainRect.width() * 1.5) ||
+                       (other.second.top >= mainRect.bottom - (mainNum.third * 0.3) && other.second.top <= mainRect.bottom + mainNum.third))
                   }
 
-                  val best = parsedList.firstOrNull()
-                  return Triple(best?.first, best?.second ?: "Товар", parsedList)
+                  if (kopecks != null && finalPrice % 1 == 0.0) {
+                      finalPrice += (kopecks.first / 100.0)
+                  }
+
+                  val foundName = findProductNameNear(mainRect, linesOfText)
+                  val resultPair = Pair(finalPrice, foundName)
+
+                  return Triple(finalPrice, foundName, listOf(resultPair))
               }
 
               private fun findProductNameNear(priceRect: Rect, lines: List<Pair<String, Rect>>): String {
-                  // Ищем русские слова рядом, отсекая технический мусор и латинский бред
                   val candidates = lines.filter { (text, rect) ->
                       text.length > 2 &&
                       !text.contains("http") && !text.contains("www") && !text.contains("sber") && !text.contains("1234") &&
-                      text.any { it in 'а'..'я' || it in 'А'..'Я' } &&
-                      rect.bottom <= priceRect.top + priceRect.height() &&
+                      text.any { it in 'а'..'я' || it in 'А'..'Я' || it in 'a'..'z' || it in 'A'..'Z' } &&
+                      rect.bottom <= priceRect.top + priceRect.height() * 1.5 &&
                       abs(rect.centerX() - priceRect.centerX()) < priceRect.width() * 3.0
                   }
 
                   val bestLine = candidates.minByOrNull { (_, rect) -> abs(priceRect.top - rect.bottom) }?.first ?: "Товар"
 
-                  val cleaned = bestLine.replace(Regex("""[^а-яА-ЯёЁ\s]"""), "").trim()
+                  val cleaned = bestLine.replace(Regex("""[^\p{L}\p{Nd}\s]"""), "").trim()
                   val words = cleaned.split(Regex("\\s+")).filter { it.length > 1 }
                   val shortName = words.take(2).joinToString(" ").take(16)
 
@@ -692,7 +696,7 @@ jobs:
                       }
 
                       val btnMinus = Button(this).apply {
-                        text = "−"
+                          text = "−"
                           textSize = 14f
                           setTypeface(null, Typeface.BOLD)
                           background = makeRoundedButtonDrawable(Color.parseColor("#555555"), 12f)
