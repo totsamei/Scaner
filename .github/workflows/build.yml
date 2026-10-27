@@ -69,8 +69,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 11
-                  versionName = "2.9"
+                  versionCode = 12
+                  versionName = "3.0"
               }
 
               compileOptions {
@@ -163,33 +163,6 @@ jobs:
           data class CartItem(var name: String, var price: Double, var count: Int = 1)
           data class PriceBox(val value: Double, val rect: Rect, val area: Int)
 
-          class ScannerOverlayView(context: Context) : View(context) {
-              private val paintDim = Paint().apply { color = Color.parseColor("#99000000") } // Затемнение 60%
-              private val paintClear = Paint().apply { 
-                  xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-                  isAntiAlias = true 
-              }
-              private val paintStroke = Paint().apply { 
-                  color = Color.parseColor("#00E676")
-                  style = Paint.Style.STROKE
-                  strokeWidth = 10f
-                  isAntiAlias = true 
-              }
-              init { setLayerType(LAYER_TYPE_HARDWARE, null) }
-
-              override fun onDraw(canvas: Canvas) {
-                  super.onDraw(canvas)
-                  canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paintDim)
-                  val cw = width * 0.70f  
-                  val ch = height * 0.25f 
-                  val cx = width / 2f
-                  val cy = height / 2f
-                  val rect = RectF(cx - cw/2, cy - ch/2, cx + cw/2, cy + ch/2)
-                  canvas.drawRoundRect(rect, 32f, 32f, paintClear)
-                  canvas.drawRoundRect(rect, 32f, 32f, paintStroke)
-              }
-          }
-
           class MainActivity : AppCompatActivity() {
 
               private lateinit var previewView: PreviewView
@@ -198,6 +171,7 @@ jobs:
               private lateinit var itemsContainer: LinearLayout
               private lateinit var chipsContainer: LinearLayout
               private lateinit var rootLayout: LinearLayout
+              private lateinit var bottomPanel: LinearLayout
               private lateinit var sumPanel: LinearLayout
               private lateinit var cameraExecutor: ExecutorService
 
@@ -243,6 +217,31 @@ jobs:
                       orientation = LinearLayout.VERTICAL
                   }
 
+                  // 1. Камера занимает ровно 35% экрана сверху
+                  val cameraFrame = FrameLayout(this).apply {
+                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.35f)
+                  }
+                  previewView = PreviewView(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  }
+                  cameraFrame.addView(previewView)
+                  
+                  // Разделительная полоска
+                  val border = View(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 6).apply {
+                          gravity = Gravity.BOTTOM
+                      }
+                      setBackgroundColor(Color.parseColor("#00E676"))
+                  }
+                  cameraFrame.addView(border)
+                  rootLayout.addView(cameraFrame)
+
+                  // 2. Нижняя панель с глухим фоном занимает 65%
+                  bottomPanel = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.65f)
+                  }
+
                   val topBar = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       setPadding(24, 16, 24, 16)
@@ -250,65 +249,48 @@ jobs:
                   }
                   val titleTv = TextView(this).apply {
                       text = "Сканер цен"
-                      textSize = 20f
+                      textSize = 18f
+                      setTextColor(Color.GRAY)
                       setTypeface(null, Typeface.BOLD)
                       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                   }
                   val btnSettings = Button(this).apply {
                       text = "⚙ Настройки"
-                      textSize = 15f
+                      textSize = 14f
                       setTypeface(null, Typeface.BOLD)
-                      setPadding(20, 10, 20, 10)
-                      background = makeRoundedButtonDrawable(Color.parseColor("#424242"), 20f)
+                      setPadding(16, 8, 16, 8)
+                      background = makeRoundedButtonDrawable(Color.parseColor("#333333"), 16f)
                       setTextColor(Color.WHITE)
                       setOnClickListener { showSettingsDialog() }
                   }
                   topBar.addView(titleTv)
                   topBar.addView(btnSettings)
-                  rootLayout.addView(topBar)
-
-                  val cameraFrame = FrameLayout(this).apply {
-                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f)
-                  }
-                  previewView = PreviewView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-                  }
-                  cameraFrame.addView(previewView)
-
-                  val overlay = ScannerOverlayView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-                  }
-                  cameraFrame.addView(overlay)
+                  bottomPanel.addView(topBar)
 
                   tvDetectedPrice = TextView(this).apply {
-                      text = "Наведи на цену..."
-                      setTextColor(Color.WHITE)
-                      textSize = 20f
+                      text = "Наведите камеру..."
+                      setTextColor(Color.parseColor("#00E676"))
+                      textSize = 28f
                       setTypeface(null, Typeface.BOLD)
-                      setPadding(40, 18, 40, 18)
-                      background = GradientDrawable().apply {
-                          setColor(Color.parseColor("#D9000000"))
-                          cornerRadius = 32f
-                      }
-                      layoutParams = FrameLayout.LayoutParams(
-                          FrameLayout.LayoutParams.WRAP_CONTENT,
-                          FrameLayout.LayoutParams.WRAP_CONTENT,
-                          Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                      ).apply { bottomMargin = 24 }
+                      setPadding(0, 10, 0, 20)
+                      gravity = Gravity.CENTER
+                      layoutParams = LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT,
+                          LinearLayout.LayoutParams.WRAP_CONTENT
+                      )
                   }
-                  cameraFrame.addView(tvDetectedPrice)
-                  rootLayout.addView(cameraFrame)
+                  bottomPanel.addView(tvDetectedPrice)
 
                   chipsContainer = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
-                      setPadding(20, 8, 20, 8)
-                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(20, 0, 20, 16)
+                      gravity = Gravity.CENTER
                   }
-                  rootLayout.addView(chipsContainer)
+                  bottomPanel.addView(chipsContainer)
 
                   val controlsLayout = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
-                      setPadding(16, 12, 16, 12)
+                      setPadding(16, 0, 16, 16)
                       gravity = Gravity.CENTER
                   }
 
@@ -324,7 +306,7 @@ jobs:
                               vibrate()
                               addPriceToCart("Товар", lockedPrice!!)
                           } else {
-                              Toast.makeText(this@MainActivity, "Сначала наведите на цену", Toast.LENGTH_SHORT).show()
+                              Toast.makeText(this@MainActivity, "Цена не определена", Toast.LENGTH_SHORT).show()
                           }
                       }
                   }
@@ -356,7 +338,7 @@ jobs:
                   controlsLayout.addView(btnAddLive)
                   controlsLayout.addView(btnFreeze)
                   controlsLayout.addView(btnManual)
-                  rootLayout.addView(controlsLayout)
+                  bottomPanel.addView(controlsLayout)
 
                   sumPanel = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
@@ -383,20 +365,20 @@ jobs:
 
                   sumPanel.addView(tvTotalSum)
                   sumPanel.addView(btnClearAll)
-                  rootLayout.addView(sumPanel)
+                  bottomPanel.addView(sumPanel)
 
                   val scrollView = ScrollView(this).apply {
-                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.9f)
+                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
                   }
                   itemsContainer = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setPadding(20, 12, 20, 24)
                   }
                   scrollView.addView(itemsContainer)
-                  rootLayout.addView(scrollView)
+                  bottomPanel.addView(scrollView)
 
+                  rootLayout.addView(bottomPanel)
                   setContentView(rootLayout)
-                  refreshCartUI()
               }
 
               private fun showClearCartDialog() {
@@ -424,8 +406,8 @@ jobs:
                   val bg: Int; val panelBg: Int
                   when (currentTheme) {
                       "Light" -> {
-                          bg = Color.parseColor("#F5F5F5")
-                          panelBg = Color.parseColor("#FFFFFF")
+                          bg = Color.parseColor("#FFFFFF")
+                          panelBg = Color.parseColor("#F5F5F5")
                       }
                       "Amoled" -> {
                           bg = Color.parseColor("#000000")
@@ -436,7 +418,7 @@ jobs:
                           panelBg = Color.parseColor("#1E1E1E")
                       }
                   }
-                  rootLayout.setBackgroundColor(bg)
+                  bottomPanel.setBackgroundColor(bg)
                   sumPanel.setBackgroundColor(panelBg)
               }
 
@@ -468,10 +450,31 @@ jobs:
 
                           val mediaImage = imageProxy.image
                           if (mediaImage != null) {
-                              val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                              val bitmap = imageProxy.toBitmap()
+                              
+                              // МАТЕМАТИКА ИДЕАЛЬНОЙ ОБРЕЗКИ (Синхронизировано с экраном)
+                              val viewRatio = previewView.width.toFloat() / previewView.height.toFloat()
+                              val bitmapRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                              
+                              var cropX = 0
+                              var cropY = 0
+                              var cropW = bitmap.width
+                              var cropH = bitmap.height
+                              
+                              if (viewRatio > bitmapRatio) {
+                                  cropH = (bitmap.width / viewRatio).toInt()
+                                  cropY = (bitmap.height - cropH) / 2
+                              } else {
+                                  cropW = (bitmap.height * viewRatio).toInt()
+                                  cropX = (bitmap.width - cropW) / 2
+                              }
+                              
+                              val croppedBitmap = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                              val image = InputImage.fromBitmap(croppedBitmap, 0)
+                              
                               recognizer.process(image)
                                   .addOnSuccessListener { visionText ->
-                                      val (bestPrice, alternatives) = analyzePriceTag(visionText, image.width, image.height)
+                                      val (bestPrice, alternatives) = analyzeCroppedImage(visionText)
                                       runOnUiThread { updateStabilizedPrice(bestPrice, alternatives) }
                                   }
                                   .addOnCompleteListener { imageProxy.close() }
@@ -491,19 +494,20 @@ jobs:
                       recentDetections.addLast(newPrice)
                       if (recentDetections.size > 4) recentDetections.removeFirst()
 
-                      // Стабилизатор: 3 одинаковых кадра из 4
                       val stablePrice = recentDetections.groupingBy { it }.eachCount().entries.firstOrNull { it.value >= 3 }?.key
 
                       if (stablePrice != null) {
                           lockedPrice = if (roundPrices) stablePrice.toInt().toDouble() else stablePrice
-                          tvDetectedPrice.text = String.format("Цена: %.2f ₽", lockedPrice)
+                          tvDetectedPrice.text = String.format("%.2f ₽", lockedPrice)
+                          tvDetectedPrice.setTextColor(Color.WHITE)
                       }
                   } else {
                       emptyFrames++
-                      if (emptyFrames >= 3) {
+                      if (emptyFrames >= 2) {
                           recentDetections.clear()
                           lockedPrice = null
-                          tvDetectedPrice.text = "Наведи на цену..."
+                          tvDetectedPrice.text = "Наведите камеру..."
+                          tvDetectedPrice.setTextColor(Color.parseColor("#00E676"))
                           chipsContainer.removeAllViews()
                       }
                   }
@@ -511,7 +515,7 @@ jobs:
                   if (alternatives.isNotEmpty() && lockedPrice != null) {
                       chipsContainer.removeAllViews()
                       val label = TextView(this).apply {
-                          text = "Выбор: "
+                          text = "Или: "
                           setTextColor(Color.LTGRAY)
                           textSize = 14f
                       }
@@ -540,54 +544,48 @@ jobs:
                   }
               }
 
-              private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Pair<Double?, List<Double>> {
+              private fun analyzeCroppedImage(visionText: Text): Pair<Double?, List<Double>> {
                   val allNumbers = mutableListOf<PriceBox>()
 
                   for (block in visionText.textBlocks) {
                       for (line in block.lines) {
-                          for (element in line.elements) {
-                              val elRect = element.boundingBox ?: continue
-                              val cx = elRect.centerX().toDouble() / imgW
-                              val cy = elRect.centerY().toDouble() / imgH
+                          val rect = line.boundingBox ?: continue
+                          
+                          // Убираем все пробелы и апострофы перед поиском (решает проблему 1'234 и 1 234)
+                          val cleanLineText = line.text
+                              .replace("O", "0").replace("О", "0")
+                              .replace("З", "3").replace("Б", "6")
+                              .replace("'", "").replace(" ", "").replace(",", ".")
 
-                              // Математическая обрезка: 70% ширины (0.15 - 0.85) и 25% высоты (0.375 - 0.625)
-                              if (cx < 0.15 || cx > 0.85 || cy < 0.375 || cy > 0.625) continue
+                          val regex = Regex("""\d{1,5}([.]\d{2})?""")
+                          val matches = regex.findAll(cleanLineText)
 
-                              val cleaned = element.text
-                                  .uppercase()
-                                  .replace("O", "0").replace("О", "0")
-                                  .replace("З", "3").replace("Б", "6")
-                                  .replace(Regex("[^0-9,.]"), "")
-
-                              if (cleaned.isEmpty()) continue
-                              
-                              val digitsOnly = cleaned.replace(".", "").replace(",", "")
-                              if (digitsOnly.length > 5) continue
-
-                              val num = cleaned.replace(",", ".").toDoubleOrNull() ?: continue
-                              if (num > 50000.0 || num < 1.0) continue 
-
-                              val area = elRect.width() * elRect.height()
-                              allNumbers.add(PriceBox(num, elRect, area))
+                          for (match in matches) {
+                              val num = match.value.toDoubleOrNull() ?: continue
+                              val area = rect.width() * rect.height()
+                              allNumbers.add(PriceBox(num, rect, area))
                           }
                       }
                   }
 
-                  if (allNumbers.isEmpty()) return Pair(null, emptyList())
+                  // ЖЕСТКИЙ ЛИМИТ: Игнорируем всё, что меньше 15 и больше 15000
+                  val validCandidates = allNumbers.filter { it.value in 15.0..15000.0 }
+                  if (validCandidates.isEmpty()) return Pair(null, emptyList())
 
-                  val sortedByArea = allNumbers.sortedByDescending { it.area }
+                  // Сортировка по площади (самый крупный шрифт)
+                  val sortedByArea = validCandidates.sortedByDescending { it.area }
                   val mainNum = sortedByArea.first()
 
                   var finalPrice = mainNum.value
-                  val mainRect = mainNum.rect
 
-                  if (finalPrice % 1 == 0.0 && finalPrice < 10000.0) {
-                      val kopecks = sortedByArea.firstOrNull { other ->
+                  // Поиск копеек, если цена целая
+                  if (finalPrice % 1 == 0.0) {
+                      val kopecks = allNumbers.firstOrNull { other ->
                           other != mainNum &&
                           other.value < 100.0 && 
                           other.area < mainNum.area && 
-                          other.rect.left >= mainRect.right && 
-                          abs(other.rect.centerY() - mainRect.centerY()) < mainRect.height()
+                          other.rect.left >= mainNum.rect.right && 
+                          abs(other.rect.centerY() - mainNum.rect.centerY()) < mainNum.rect.height()
                       }
 
                       if (kopecks != null) {
@@ -598,7 +596,7 @@ jobs:
                   }
 
                   val alts = sortedByArea.map { it.value }
-                      .filter { it != mainNum.value && it > 2.0 && it != finalPrice }
+                      .filter { it != mainNum.value && it != finalPrice }
                       .distinct()
 
                   return Pair(finalPrice, alts)
@@ -608,9 +606,9 @@ jobs:
                   try {
                       val image = InputImage.fromFilePath(this, uri)
                       recognizer.process(image).addOnSuccessListener { visionText ->
-                          val (bestPrice, list) = analyzePriceTag(visionText, image.width, image.height)
+                          val (bestPrice, list) = analyzeCroppedImage(visionText)
                           if (bestPrice == null) {
-                              Toast.makeText(this, "Цены не найдены", Toast.LENGTH_SHORT).show()
+                              Toast.makeText(this, "Подходящая цена (от 15 до 15000) не найдена", Toast.LENGTH_SHORT).show()
                           } else {
                               val items = (listOf(bestPrice) + list).map { String.format("%.2f ₽", if (roundPrices) it.toInt().toDouble() else it) }.toTypedArray()
                               AlertDialog.Builder(this)
