@@ -69,8 +69,8 @@ jobs:
                   applicationId = "com.example.pricescanner"
                   minSdk = 24
                   targetSdk = 34
-                  versionCode = 6
-                  versionName = "2.4"
+                  versionCode = 7
+                  versionName = "2.5"
               }
 
               compileOptions {
@@ -87,8 +87,8 @@ jobs:
               implementation("androidx.appcompat:appcompat:1.6.1")
               implementation("com.google.android.material:material:1.11.0")
               
-              // Заменено на библиотеку с поддержкой русского языка
-              implementation("com.google.mlkit:text-recognition-cyrillic:16.0.1")
+              // Возвращаем стабильную версию для надежного чтения цифр
+              implementation("com.google.mlkit:text-recognition:16.0.0")
 
               val cameraxVersion = "1.3.1"
               implementation("androidx.camera:camera-core:$cameraxVersion")
@@ -108,7 +108,7 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:label="Сканер цен 2.4"
+                  android:label="Сканер цен"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
 
@@ -159,7 +159,7 @@ jobs:
           import com.google.mlkit.vision.common.InputImage
           import com.google.mlkit.vision.text.Text
           import com.google.mlkit.vision.text.TextRecognition
-          import com.google.mlkit.vision.text.cyrillic.CyrillicTextRecognizerOptions
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
           import java.util.concurrent.ExecutorService
           import java.util.concurrent.Executors
           import kotlin.math.abs
@@ -178,12 +178,11 @@ jobs:
               private lateinit var sumPanel: LinearLayout
               private lateinit var cameraExecutor: ExecutorService
 
-              private val recognizer = TextRecognition.getClient(CyrillicTextRecognizerOptions.Builder().build())
+              private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
               private val cartItems = mutableListOf<CartItem>()
 
               private val recentDetections = ArrayDeque<Double>()
               private var lockedPrice: Double? = null
-              private var lockedName: String = "Товар"
               private var isPaused = false
               private var lastAnalyzeTime = 0L
 
@@ -267,9 +266,9 @@ jobs:
                   tvDetectedPrice = TextView(this).apply {
                       text = "Наведи на цену..."
                       setTextColor(Color.WHITE)
-                      textSize = 17f
+                      textSize = 19f
                       setTypeface(null, Typeface.BOLD)
-                      setPadding(28, 12, 28, 12)
+                      setPadding(32, 14, 32, 14)
                       background = GradientDrawable().apply {
                           setColor(Color.parseColor("#D9000000"))
                           cornerRadius = 30f
@@ -306,7 +305,7 @@ jobs:
                       setOnClickListener {
                           lockedPrice?.let { price ->
                               vibrate()
-                              addPriceToCart(lockedName, price)
+                              addPriceToCart("Товар", price)
                           } ?: Toast.makeText(this@MainActivity, "Цена не поймана", Toast.LENGTH_SHORT).show()
                       }
                   }
@@ -444,9 +443,9 @@ jobs:
                               val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                               recognizer.process(image)
                                   .addOnSuccessListener { visionText ->
-                                      val (bestPrice, bestName, alternatives) = analyzePriceTag(visionText, image.width, image.height)
+                                      val (bestPrice, alternatives) = analyzePriceTag(visionText, image.width, image.height)
                                       runOnUiThread {
-                                          updateStabilizedPrice(bestPrice, bestName, alternatives)
+                                          updateStabilizedPrice(bestPrice, alternatives)
                                       }
                                   }
                                   .addOnCompleteListener { imageProxy.close() }
@@ -460,7 +459,7 @@ jobs:
                   }, ContextCompat.getMainExecutor(this))
               }
 
-              private fun updateStabilizedPrice(newPrice: Double?, newName: String, alternatives: List<Pair<Double, String>>) {
+              private fun updateStabilizedPrice(newPrice: Double?, alternatives: List<Double>) {
                   if (newPrice != null) {
                       if (recentDetections.size >= 4) recentDetections.removeFirst()
                       recentDetections.addLast(newPrice)
@@ -469,12 +468,10 @@ jobs:
 
                       if (stablePrice != null) {
                           lockedPrice = if (roundPrices) stablePrice.toInt().toDouble() else stablePrice
-                          lockedName = newName
-                          tvDetectedPrice.text = String.format("%s: %.2f ₽", lockedName, lockedPrice)
+                          tvDetectedPrice.text = String.format("Цена: %.2f ₽", lockedPrice)
                       } else if (lockedPrice == null) {
                           lockedPrice = if (roundPrices) newPrice.toInt().toDouble() else newPrice
-                          lockedName = newName
-                          tvDetectedPrice.text = String.format("%s: %.2f ₽", lockedName, lockedPrice)
+                          tvDetectedPrice.text = String.format("Цена: %.2f ₽", lockedPrice)
                       }
                   }
 
@@ -487,10 +484,10 @@ jobs:
                       }
                       chipsContainer.addView(label)
 
-                      alternatives.take(3).forEach { (altPrice, altName) ->
+                      alternatives.take(3).forEach { altPrice ->
                           val finalAltPrice = if (roundPrices) altPrice.toInt().toDouble() else altPrice
                           val chip = Button(this).apply {
-                              text = String.format("%s: %.0f ₽", altName.take(7), finalAltPrice)
+                              text = String.format("%.0f ₽", finalAltPrice)
                               textSize = 12f
                               setPadding(14, 2, 14, 2)
                               background = makeRoundedButtonDrawable(Color.parseColor("#2E7D32"), 16f)
@@ -501,7 +498,7 @@ jobs:
                               ).apply { marginStart = 8 }
                               setOnClickListener {
                                   vibrate()
-                                  addPriceToCart(altName, finalAltPrice)
+                                  addPriceToCart("Товар", finalAltPrice)
                               }
                           }
                           chipsContainer.addView(chip)
@@ -509,9 +506,8 @@ jobs:
                   }
               }
 
-              private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Triple<Double?, String, List<Pair<Double, String>>> {
+              private fun analyzePriceTag(visionText: Text, imgW: Int, imgH: Int): Pair<Double?, List<Double>> {
                   val allNumbers = mutableListOf<PriceBox>()
-                  val linesOfText = mutableListOf<Pair<String, Rect>>()
                   val minAllowedHeight = (imgH * 0.02).toInt()
 
                   for (block in visionText.textBlocks) {
@@ -520,18 +516,8 @@ jobs:
                           val cx = rect.centerX().toDouble() / imgW
                           val cy = rect.centerY().toDouble() / imgH
 
-                          // Строгое ограничение: сканируем ТОЛЬКО центральную область
-                          // Игнорируем верхнюю и нижнюю треть экрана
+                          // Строгое ограничение: ТОЛЬКО зеленый прицел по центру экрана!
                           if (cx < 0.1 || cx > 0.9 || cy < 0.35 || cy > 0.65) continue
-
-                          val textLower = line.text.lowercase()
-                          linesOfText.add(Pair(line.text, rect))
-
-                          if (textLower.contains("стара") || textLower.contains("http") || textLower.contains("www") || 
-                              textLower.contains("sber") || textLower.contains("123456") || textLower.contains("г/") || 
-                              textLower.contains("гр") || textLower.contains("мл") || textLower.contains("ккал")) {
-                              continue
-                          }
 
                           for (element in line.elements) {
                               val elRect = element.boundingBox ?: continue
@@ -545,22 +531,24 @@ jobs:
                               if (cleaned.isEmpty()) continue
 
                               val num = cleaned.replace(",", ".").toDoubleOrNull() ?: continue
-                              if (num > 50000.0) continue // Защита от штрихкодов
+                              // Отсекаем штрихкоды и мелкий мусор
+                              if (num > 50000.0 || num < 2.0) continue 
 
                               allNumbers.add(PriceBox(num, elRect, elRect.height()))
                           }
                       }
                   }
 
-                  if (allNumbers.isEmpty()) return Triple(null, "Товар", emptyList())
+                  if (allNumbers.isEmpty()) return Pair(null, emptyList())
 
+                  // Сортировка по размеру шрифта (самая крупная цифра = главная цена)
                   val sortedByHeight = allNumbers.sortedByDescending { it.height }
                   val mainNum = sortedByHeight.first()
 
                   var finalPrice = mainNum.value
                   val mainRect = mainNum.rect
 
-                  // Поиск копеек рядом с главной цифрой
+                  // Умное объединение с копейками
                   if (finalPrice % 1 == 0.0 && finalPrice < 10000.0) {
                       val kopecks = sortedByHeight.firstOrNull { other ->
                           other != mainNum &&
@@ -576,45 +564,29 @@ jobs:
                       }
                   }
 
-                  val foundName = findProductNameNear(mainRect, linesOfText)
-                  val resultPair = Pair(finalPrice, foundName)
+                  // Альтернативные цены для Быстрого Выбора
+                  val alts = sortedByHeight.map { it.value }
+                      .filter { it != mainNum.value && it > 10.0 }
+                      .distinct()
 
-                  return Triple(finalPrice, foundName, listOf(resultPair))
-              }
-
-              private fun findProductNameNear(priceRect: Rect, lines: List<Pair<String, Rect>>): String {
-                  val candidates = lines.filter { (text, rect) ->
-                      text.length > 3 &&
-                      !text.lowercase().contains("http") && !text.lowercase().contains("www") && 
-                      text.any { it in 'а'..'я' || it in 'А'..'Я' } &&
-                      rect.bottom <= priceRect.top + (priceRect.height() * 0.5) &&
-                      abs(rect.centerX() - priceRect.centerX()) < priceRect.width() * 2.0
-                  }
-
-                  val bestLine = candidates.minByOrNull { (_, rect) -> abs(priceRect.top - rect.bottom) }?.first ?: "Товар"
-
-                  val cleaned = bestLine.replace(Regex("""[^а-яА-ЯёЁa-zA-Z0-9\s]"""), "").trim()
-                  val words = cleaned.split(Regex("\\s+")).filter { it.length > 1 }
-                  val shortName = words.take(3).joinToString(" ").take(20)
-
-                  return if (shortName.isNotBlank()) shortName else "Товар"
+                  return Pair(finalPrice, alts)
               }
 
               private fun processImageFromUri(uri: Uri) {
                   try {
                       val image = InputImage.fromFilePath(this, uri)
                       recognizer.process(image).addOnSuccessListener { visionText ->
-                          val (_, _, list) = analyzePriceTag(visionText, image.width, image.height)
-                          if (list.isEmpty()) {
+                          val (bestPrice, list) = analyzePriceTag(visionText, image.width, image.height)
+                          if (bestPrice == null) {
                               Toast.makeText(this, "Цены не найдены", Toast.LENGTH_SHORT).show()
                           } else {
-                              val items = list.map { String.format("%s: %.2f ₽", it.second, if (roundPrices) it.first.toInt() else it.first) }.toTypedArray()
+                              val items = (listOf(bestPrice) + list).map { String.format("%.2f ₽", if (roundPrices) it.toInt().toDouble() else it) }.toTypedArray()
                               AlertDialog.Builder(this)
-                                  .setTitle("Выбери товар и цену:")
+                                  .setTitle("Выбери цену:")
                                   .setItems(items) { _, which ->
-                                      val sel = list[which]
-                                      val p = if (roundPrices) sel.first.toInt().toDouble() else sel.first
-                                      addPriceToCart(sel.second, p)
+                                      val sel = (listOf(bestPrice) + list)[which]
+                                      val p = if (roundPrices) sel.toInt().toDouble() else sel
+                                      addPriceToCart("Товар", p)
                                   }
                                   .setNegativeButton("Отмена", null)
                                   .show()
@@ -794,7 +766,7 @@ jobs:
                       orientation = LinearLayout.VERTICAL
                       setPadding(30, 20, 30, 10)
                   }
-                  val nameInput = EditText(this).apply { hint = "Название товара" }
+                  val nameInput = EditText(this).apply { hint = "Название товара (опционально)" }
                   val priceInput = EditText(this).apply {
                       inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                       hint = "Цена (например: 159.90)"
