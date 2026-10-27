@@ -1,0 +1,517 @@
+name: Build Offline Price Scanner APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Generate Android Project Files
+        run: |
+          mkdir -p app/src/main/java/com/example/pricescanner
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "PriceScanner"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.pricescanner"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.example.pricescanner"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("com.google.android.material:material:1.11.0")
+              implementation("com.google.mlkit:text-recognition:16.0.0")
+
+              val cameraxVersion = "1.3.1"
+              implementation("androidx.camera:camera-core:$cameraxVersion")
+              implementation("androidx.camera:camera-camera2:$cameraxVersion")
+              implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+              implementation("androidx.camera:camera-view:$cameraxVersion")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-feature android:name="android.hardware.camera.any" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="Сканер цен"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
+
+                  <meta-data
+                      android:name="com.google.mlkit.vision.DEPENDENCIES"
+                      android:value="ocr" />
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/example/pricescanner/MainActivity.kt
+          package com.example.pricescanner
+
+          import android.Manifest
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.net.Uri
+          import android.os.Bundle
+          import android.text.InputType
+          import android.util.Size
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.*
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.annotation.OptIn
+          import androidx.appcompat.app.AlertDialog
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.camera.core.*
+          import androidx.camera.lifecycle.ProcessCameraProvider
+          import androidx.camera.view.PreviewView
+          import androidx.core.content.ContextCompat
+          import com.google.mlkit.vision.common.InputImage
+          import com.google.mlkit.vision.text.Text
+          import com.google.mlkit.vision.text.TextRecognition
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+          import java.util.concurrent.ExecutorService
+          import java.util.concurrent.Executors
+          import kotlin.math.abs
+
+          data class CartItem(var price: Double, var count: Int = 1)
+
+          class MainActivity : AppCompatActivity() {
+
+              private lateinit var previewView: PreviewView
+              private lateinit var tvDetectedPrice: TextView
+              private lateinit var tvTotalSum: TextView
+              private lateinit var itemsContainer: LinearLayout
+              private lateinit var cameraExecutor: ExecutorService
+
+              private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+              private val cartItems = mutableListOf<CartItem>()
+              private var currentLivePrice: Double? = null
+              private var lastAnalyzeTime = 0L
+
+              private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+                  uri?.let { processImageFromUri(it) }
+              }
+
+              private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+                  if (isGranted) startCamera() else Toast.makeText(this, "Нужен доступ к камере", Toast.LENGTH_LONG).show()
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  cameraExecutor = Executors.newSingleThreadExecutor()
+                  setupUI()
+
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                      startCamera()
+                  } else {
+                      requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+                  }
+              }
+
+              private fun setupUI() {
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(Color.parseColor("#121212"))
+                  }
+
+                  val cameraFrame = FrameLayout(this).apply {
+                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.1f)
+                  }
+                  previewView = PreviewView(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                  }
+                  cameraFrame.addView(previewView)
+
+                  val targetBox = View(this).apply {
+                      val sizeW = (resources.displayMetrics.widthPixels * 0.72f).toInt()
+                      val sizeH = (resources.displayMetrics.heightPixels * 0.18f).toInt()
+                      layoutParams = FrameLayout.LayoutParams(sizeW, sizeH, Gravity.CENTER)
+                      background = GradientDrawable().apply {
+                          setStroke(6, Color.parseColor("#00E676"))
+                          cornerRadius = 24f
+                          setColor(Color.parseColor("#22000000"))
+                      }
+                  }
+                  cameraFrame.addView(targetBox)
+
+                  tvDetectedPrice = TextView(this).apply {
+                      text = "Наведи рамку на ценник..."
+                      setTextColor(Color.WHITE)
+                      textSize = 18f
+                      setTypeface(null, Typeface.BOLD)
+                      setPadding(36, 16, 36, 16)
+                      background = GradientDrawable().apply {
+                          setColor(Color.parseColor("#CC000000"))
+                          cornerRadius = 40f
+                      }
+                      layoutParams = FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.WRAP_CONTENT,
+                          FrameLayout.LayoutParams.WRAP_CONTENT,
+                          Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                      ).apply { bottomMargin = 24 }
+                  }
+                  cameraFrame.addView(tvDetectedPrice)
+                  root.addView(cameraFrame)
+
+                  val controlsLayout = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(20, 14, 20, 14)
+                      gravity = Gravity.CENTER
+                  }
+
+                  val btnAddLive = Button(this).apply {
+                      text = "+ Добавить"
+                      textSize = 15f
+                      setBackgroundColor(Color.parseColor("#00C853"))
+                      setTextColor(Color.WHITE)
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f).apply { marginEnd = 10 }
+                      setOnClickListener {
+                          currentLivePrice?.let { price ->
+                              addPriceToCart(price)
+                          } ?: Toast.makeText(this@MainActivity, "Цена пока не поймана", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+
+                  val btnPickPhoto = Button(this).apply {
+                      text = "Из фото"
+                      textSize = 14f
+                      setBackgroundColor(Color.parseColor("#2979FF"))
+                      setTextColor(Color.WHITE)
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 10 }
+                      setOnClickListener { pickImageLauncher.launch("image/*") }
+                  }
+
+                  val btnManual = Button(this).apply {
+                      text = "Вручную"
+                      textSize = 14f
+                      setBackgroundColor(Color.parseColor("#424242"))
+                      setTextColor(Color.WHITE)
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                      setOnClickListener { showManualInputDialog() }
+                  }
+
+                  controlsLayout.addView(btnAddLive)
+                  controlsLayout.addView(btnPickPhoto)
+                  controlsLayout.addView(btnManual)
+                  root.addView(controlsLayout)
+
+                  val sumPanel = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(28, 14, 28, 14)
+                      setBackgroundColor(Color.parseColor("#1E1E1E"))
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+
+                  tvTotalSum = TextView(this).apply {
+                      text = "Итого: 0.00 ₽"
+                      setTextColor(Color.parseColor("#00E676"))
+                      textSize = 22f
+                      setTypeface(null, Typeface.BOLD)
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                  }
+
+                  val btnClearAll = Button(this).apply {
+                      text = "Сброс"
+                      setBackgroundColor(Color.parseColor("#D32F2F"))
+                      setTextColor(Color.WHITE)
+                      setOnClickListener {
+                          cartItems.clear()
+                          refreshCartUI()
+                      }
+                  }
+
+                  sumPanel.addView(tvTotalSum)
+                  sumPanel.addView(btnClearAll)
+                  root.addView(sumPanel)
+
+                  val scrollView = ScrollView(this).apply {
+                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 0.9f)
+                  }
+                  itemsContainer = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(20, 12, 20, 24)
+                  }
+                  scrollView.addView(itemsContainer)
+                  root.addView(scrollView)
+
+                  setContentView(root)
+              }
+
+              @OptIn(ExperimentalGetImage::class)
+              private fun startCamera() {
+                  val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+                  cameraProviderFuture.addListener({
+                      val cameraProvider = cameraProviderFuture.get()
+                      val preview = Preview.Builder().build().also {
+                          it.setSurfaceProvider(previewView.surfaceProvider)
+                      }
+
+                      val imageAnalyzer = ImageAnalysis.Builder()
+                          .setTargetResolution(Size(720, 1280))
+                          .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                          .build()
+
+                      imageAnalyzer.setAnalyzer(cameraExecutor) { imageProxy ->
+                          val now = System.currentTimeMillis()
+                          if (now - lastAnalyzeTime < 350) {
+                              imageProxy.close()
+                              return@setAnalyzer
+                          }
+                          lastAnalyzeTime = now
+
+                          val mediaImage = imageProxy.image
+                          if (mediaImage != null) {
+                              val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                              recognizer.process(image)
+                                  .addOnSuccessListener { visionText ->
+                                      val bestPrice = extractBestPriceFromLiveFrame(visionText, image.width, image.height)
+                                      runOnUiThread {
+                                          if (bestPrice != null) {
+                                              currentLivePrice = bestPrice
+                                              tvDetectedPrice.text = String.format("Поймана цена: %.2f ₽", bestPrice)
+                                          }
+                                      }
+                                  }
+                                  .addOnCompleteListener { imageProxy.close() }
+                          } else {
+                              imageProxy.close()
+                          }
+                      }
+
+                      cameraProvider.unbindAll()
+                      cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalyzer)
+                  }, ContextCompat.getMainExecutor(this))
+              }
+
+              private fun extractBestPriceFromLiveFrame(visionText: Text, imgW: Int, imgH: Int): Double? {
+                  var bestCandidate: Double? = null
+                  var maxScore = 0.0
+
+                  for (block in visionText.textBlocks) {
+                      for (line in block.lines) {
+                          val box = line.boundingBox ?: continue
+                          val centerX = box.centerX().toDouble() / imgW
+                          val centerY = box.centerY().toDouble() / imgH
+                          // Фильтруем строго по центральной рамке прицела
+                          if (centerX < 0.14 || centerX > 0.86 || centerY < 0.25 || centerY > 0.75) continue
+
+                          val parsedPrice = parsePriceString(line.text) ?: continue
+                          val heightScore = box.height().toDouble()
+                          val centerPenalty = 1.0 - abs(0.5 - centerY)
+                          val totalScore = heightScore * centerPenalty
+
+                          if (totalScore > maxScore) {
+                              maxScore = totalScore
+                              bestCandidate = parsedPrice
+                          }
+                      }
+                  }
+                  return bestCandidate
+              }
+
+              private fun processImageFromUri(uri: Uri) {
+                  try {
+                      val image = InputImage.fromFilePath(this, uri)
+                      recognizer.process(image).addOnSuccessListener { visionText ->
+                          val candidates = mutableSetOf<Double>()
+                          for (block in visionText.textBlocks) {
+                              for (line in block.lines) {
+                                  parsePriceString(line.text)?.let { candidates.add(it) }
+                              }
+                          }
+                          val sorted = candidates.sortedDescending()
+                          if (sorted.isEmpty()) {
+                              Toast.makeText(this, "Цены на фото не найдены", Toast.LENGTH_SHORT).show()
+                          } else {
+                              val items = sorted.map { String.format("%.2f ₽", it) }.toTypedArray()
+                              AlertDialog.Builder(this)
+                                  .setTitle("Выбери цену с фото:")
+                                  .setItems(items) { _, which -> addPriceToCart(sorted[which]) }
+                                  .setNegativeButton("Отмена", null)
+                                  .show()
+                          }
+                      }
+                  } catch (e: Exception) {
+                      Toast.makeText(this, "Ошибка чтения фото", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              private fun parsePriceString(raw: String): Double? {
+                  val cleaned = raw.replace("O", "0").replace("о", "0")
+                  val regex = Regex("""(?<!\d)(\d{1,5}(?:[.,]\d{2})?)(?!\d)""")
+                  val matches = regex.findAll(cleaned).mapNotNull {
+                      it.value.replace(",", ".").toDoubleOrNull()
+                  }.filter { it in 2.0..99999.0 && it !in 2020.0..2030.0 }
+
+                  return matches.firstOrNull()
+              }
+
+              private fun addPriceToCart(price: Double) {
+                  cartItems.add(0, CartItem(price, 1))
+                  refreshCartUI()
+              }
+
+              private fun refreshCartUI() {
+                  itemsContainer.removeAllViews()
+                  var total = 0.0
+
+                  cartItems.forEachIndexed { index, item ->
+                      total += item.price * item.count
+
+                      val row = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          setPadding(12, 10, 12, 10)
+                          gravity = Gravity.CENTER_VERTICAL
+                      }
+
+                      val tvItem = TextView(this).apply {
+                          text = String.format("%.2f ₽  × %d  =  %.2f ₽", item.price, item.count, item.price * item.count)
+                          setTextColor(Color.WHITE)
+                          textSize = 17f
+                          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                      }
+
+                      val btnMinus = Button(this).apply {
+                          text = "−"
+                          setOnClickListener {
+                              item.count--
+                              if (item.count <= 0) cartItems.removeAt(index)
+                              refreshCartUI()
+                          }
+                      }
+
+                      val btnPlus = Button(this).apply {
+                          text = "+1"
+                          setOnClickListener {
+                              item.count++
+                              refreshCartUI()
+                          }
+                      }
+
+                      row.addView(tvItem)
+                      row.addView(btnMinus)
+                      row.addView(btnPlus)
+                      itemsContainer.addView(row)
+                  }
+
+                  tvTotalSum.text = String.format("Итого: %.2f ₽", total)
+              }
+
+              private fun showManualInputDialog() {
+                  val input = EditText(this).apply {
+                      inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                      hint = "Например: 159.90"
+                  }
+                  AlertDialog.Builder(this)
+                      .setTitle("Ввести цену вручную")
+                      .setView(input)
+                      .setPositiveButton("Добавить") { _, _ ->
+                          val value = input.text.toString().replace(",", ".").toDoubleOrNull()
+                          if (value != null && value > 0) addPriceToCart(value)
+                      }
+                      .setNegativeButton("Отмена", null)
+                      .show()
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  cameraExecutor.shutdown()
+              }
+          }
+          EOF
+
+      - name: Setup Gradle and Build Debug APK
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
+          arguments: assembleDebug
+
+      - name: Upload Ready APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PriceScanner-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
